@@ -54,7 +54,7 @@ def get_pdf_url(doi, email):
     params = {'email': email}
 
     try:
-        response = requests.get(api_url, params=params, timeout=10)
+        response = requests.get(api_url, params = params, timeout = 10)
         response.raise_for_status()
         data = response.json()
 
@@ -77,11 +77,11 @@ def download_pdf(pdf_url, output_path):
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        response = requests.get(pdf_url, headers=headers, timeout=30, stream=True)
+        response = requests.get(pdf_url, headers = headers, timeout = 30, stream = True)
         response.raise_for_status()
 
         with open(output_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
+            for chunk in response.iter_content(chunk_size = 8192):
                 f.write(chunk)
 
         return True
@@ -103,9 +103,9 @@ def doi_to_filename(doi):
 def main():
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
-        description='Download open access PDFs using the Unpaywall API',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''
+        description = 'Download open access PDFs using the Unpaywall API',
+        formatter_class = argparse.RawDescriptionHelpFormatter,
+        epilog = '''
 Examples:
   %(prog)s --email user@example.com
   %(prog)s -e user@example.com -o PDFs
@@ -114,18 +114,18 @@ Examples:
     )
     parser.add_argument(
         '-e', '--email',
-        default=os.environ.get('EMAIL', 'user@example.com'),
-        help='Email address for Unpaywall API (default: EMAIL env var or user@example.com)'
+        default = os.environ.get('EMAIL', 'user@example.com'),
+        help = 'Email address for Unpaywall API (default: EMAIL env var or user@example.com)'
     )
     parser.add_argument(
         '-o', '--output-dir',
-        default='References',
-        help='Directory to save PDFs (default: References)'
+        default = 'References',
+        help = 'Directory to save PDFs (default: References)'
     )
     parser.add_argument(
         '-r', '--references',
-        default='references.txt',
-        help='References file to parse (default: references.txt)'
+        default = 'references.txt',
+        help = 'References file to parse (default: references.txt)'
     )
 
     args = parser.parse_args()
@@ -139,7 +139,7 @@ Examples:
         print('Warning: Using default email. Specify --email for better results.')
 
     # Create output directory
-    output_dir.mkdir(exist_ok=True)
+    output_dir.mkdir(exist_ok = True)
 
     # Extract DOIs
     print(f'Extracting DOIs from {references_file}...')
