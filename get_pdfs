@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+# /// script
+# dependencies = [
+#   "requests>=2.32.0",
+# ]
+# ///
+"""
+Download PDFs for references using the Unpaywall API.
+Extracts DOIs from references.txt and downloads available PDFs.
+"""
+import base64
+import os
+import re
+import sys
+from pathlib import Path
+
+import requests
+
+
+def extract_dois(references_file):
+    """Extract DOIs from the references file."""
+    dois = []
+
+    with open(references_file, 'r') as f:
+        content = f.read()
+
+    # Pattern to match [DOI]: or [doi]: with optional whitespace
+    # Followed by the DOI (format: 10.XXXX/...)
+    pattern = r'\[\s*[Dd][Oo][Ii]\s*\]:\s*(10\.\S+?)(?:\s|$|OSTI|PMID|{)'
+
+    matches = re.findall(pattern, content)
+
+    for doi in matches:
+        # Clean up any trailing punctuation
+        doi = doi.rstrip('.,;')
+        dois.append(doi)
+
+    return dois
+
+
+def get_pdf_url(doi, email):
+    """
+    Query Unpaywall API to get PDF URL for a DOI.
+
+    Args:
+        doi: The DOI to look up
+        email: Email address for Unpaywall API (required)
+
+    Returns:
+        PDF URL if available, None otherwise
+    """
+    api_url = f'https://api.unpaywall.org/v2/{doi}'
+    params = {'email': email}
+
+    try:
+        response = requests.get(api_url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+
+        # Check for open access PDF
+        if data.get('is_oa'):
+            best_oa = data.get('best_oa_location')
+            if best_oa and best_oa.get('url_for_pdf'):
+                return best_oa['url_for_pdf']
+
+        return None
+    except Exception as e:
+        print(f'Error fetching metadata for {doi}: {e}')
+        return None
+
+
+def download_pdf(pdf_url, output_path):
+    """Download PDF from URL to output path."""
+    try:
+        # Add headers to avoid 403 errors from some publishers
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(pdf_url, headers=headers, timeout=30, stream=True)
+        response.raise_for_status()
+
+        with open(output_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+
+        return True
+    except Exception as e:
+        print(f'Error downloading PDF: {e}')
+        return False
+
+
+def doi_to_filename(doi):
+    """Convert DOI to base64-encoded filename."""
+    # Encode DOI to base64
+    doi_bytes = doi.encode('utf-8')
+    b64_encoded = base64.b64encode(doi_bytes).decode('utf-8')
+    # Remove padding and replace URL-unsafe characters
+    b64_encoded = b64_encoded.replace('/', '_').replace('+', '-').rstrip('=')
+    return f'{b64_encoded}.pdf'
+
+
+def main():
+    # Configuration
+    references_file = 'references.txt'
+    output_dir = Path('References')
+    email = os.environ.get('EMAIL', 'user@example.com')
+
+    if email == 'user@example.com':
+        print('Warning: Using default email. Set EMAIL environment variable for better results.')
+
+    # Create output directory
+    output_dir.mkdir(exist_ok=True)
+
+    # Extract DOIs
+    print(f'Extracting DOIs from {references_file}...')
+    dois = extract_dois(references_file)
+    print(f'Found {len(dois)} DOIs')
+
+    # Remove duplicates while preserving order
+    unique_dois = []
+    seen = set()
+    for doi in dois:
+        if doi not in seen:
+            unique_dois.append(doi)
+            seen.add(doi)
+
+    print(f'Unique DOIs: {len(unique_dois)}')
+
+    # Download PDFs
+    success_count = 0
+    skip_count = 0
+    fail_count = 0
+
+    for i, doi in enumerate(unique_dois, 1):
+        filename = doi_to_filename(doi)
+        output_path = output_dir / filename
+
+        # Skip if already downloaded
+        if output_path.exists():
+            print(f'[{i}/{len(unique_dois)}] Skipping {doi} (already exists)')
+            skip_count += 1
+            continue
+
+        print(f'[{i}/{len(unique_dois)}] Processing {doi}...')
+
+        # Get PDF URL from Unpaywall
+        pdf_url = get_pdf_url(doi, email)
+
+        if pdf_url:
+            print(f'  Found PDF at {pdf_url}')
+            if download_pdf(pdf_url, output_path):
+                print(f'  ✓ Downloaded to {output_path}')
+                success_count += 1
+            else:
+                print(f'  ✗ Failed to download')
+                fail_count += 1
+        else:
+            print(f'  ✗ No open access PDF available')
+            fail_count += 1
+
+    print(f'\n{"="*80}')
+    print(f'Summary:')
+    print(f'  Total DOIs: {len(unique_dois)}')
+    print(f'  Downloaded: {success_count}')
+    print(f'  Skipped (already exists): {skip_count}')
+    print(f'  Failed/Not available: {fail_count}')
+    print(f'{"="*80}')
+
+
+if __name__ == '__main__':
+    main()
