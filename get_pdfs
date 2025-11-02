@@ -8,6 +8,7 @@
 Download PDFs for references using the Unpaywall API.
 Extracts DOIs from references.txt and downloads available PDFs.
 """
+import argparse
 import base64
 import os
 import re
@@ -100,13 +101,42 @@ def doi_to_filename(doi):
 
 
 def main():
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(
+        description='Download open access PDFs using the Unpaywall API',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  %(prog)s --email user@example.com
+  %(prog)s -e user@example.com -o PDFs
+  %(prog)s --email user@example.com --output-dir Downloads/Papers
+        '''
+    )
+    parser.add_argument(
+        '-e', '--email',
+        default=os.environ.get('EMAIL', 'user@example.com'),
+        help='Email address for Unpaywall API (default: EMAIL env var or user@example.com)'
+    )
+    parser.add_argument(
+        '-o', '--output-dir',
+        default='References',
+        help='Directory to save PDFs (default: References)'
+    )
+    parser.add_argument(
+        '-r', '--references',
+        default='references.txt',
+        help='References file to parse (default: references.txt)'
+    )
+
+    args = parser.parse_args()
+
     # Configuration
-    references_file = 'references.txt'
-    output_dir = Path('References')
-    email = os.environ.get('EMAIL', 'user@example.com')
+    references_file = args.references
+    output_dir = Path(args.output_dir)
+    email = args.email
 
     if email == 'user@example.com':
-        print('Warning: Using default email. Set EMAIL environment variable for better results.')
+        print('Warning: Using default email. Specify --email for better results.')
 
     # Create output directory
     output_dir.mkdir(exist_ok=True)
