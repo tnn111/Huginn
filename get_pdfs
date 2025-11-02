@@ -25,9 +25,9 @@ def extract_dois(references_file):
     with open(references_file, 'r') as f:
         content = f.read()
 
-    # Pattern to match [DOI]: or [doi]: with optional whitespace
+    # Pattern to match [DOI]:, [doi]:, DOI:, or doi: with optional whitespace
     # Followed by the DOI (format: 10.XXXX/...)
-    pattern = r'\[\s*[Dd][Oo][Ii]\s*\]:\s*(10\.\S+?)(?:\s|$|OSTI|PMID|{)'
+    pattern = r'(?:\[\s*[Dd][Oo][Ii]\s*\]|[Dd][Oo][Ii]):\s*(10\.\S+?)(?:\s|$)'
 
     matches = re.findall(pattern, content)
 
