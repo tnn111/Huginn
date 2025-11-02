@@ -37,12 +37,12 @@ def extract_references(html_content):
             # Collect lines until next reference or section header
             while i < len(lines):
                 next_line = lines[i]
-                
+
                 # Stop at section headers or new references
                 if re.match(r'^(20\d{2}|Synergistic|Books)', next_line):
                     break
-                if (re.match(r'^[A-Z][A-Za-z\-]+[,\s]+.*?\(\d{4}\)', next_line) and 
-                    not any(x in next_line for x in ['[DOI]', '[doi]', 'OSTI'])):
+                # If line looks like a new reference, always treat it as such
+                if re.match(r'^[A-Z][A-Za-z\-]+[,\s]+.*?\(\d{4}\)', next_line):
                     break
                 
                 ref_parts.append(next_line)
