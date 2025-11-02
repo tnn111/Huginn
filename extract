@@ -13,7 +13,7 @@ def fetch_page(url):
         req = Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         return urlopen(req).read().decode('utf-8')
     except:
-        print("Network access restricted or urllib not available")
+        print('Network access restricted or urllib not available')
         return None
 
 def extract_references(html_content):
@@ -72,26 +72,26 @@ def main():
         if arg.startswith('http'):
             html = fetch_page(arg)
             if not html:
-                print("Failed to fetch URL")
+                print('Failed to fetch URL')
                 return
         else:
             with open(arg) as f:
                 html = f.read()
     else:
         html = sys.stdin.read()
-    
+
     refs = extract_references(html)
-    
-    print(f"\n{'='*80}")
-    print(f"Extracted {len(refs)} bibliographical references")
-    print(f"{'='*80}\n")
-    
+
+    print(f'\n{"="*80}')
+    print(f'Extracted {len(refs)} bibliographical references')
+    print(f'{"="*80}\n')
+
     for i, ref in enumerate(refs, 1):
-        print(f"[{i}] {ref}\n")
-    
-    print(f"{'='*80}")
-    print(f"Total: {len(refs)} references extracted")
-    print(f"{'='*80}\n")
+        print(f'[{i}] {ref}\n')
+
+    print(f'{"="*80}')
+    print(f'Total: {len(refs)} references extracted')
+    print(f'{"="*80}\n')
 
 if __name__ == '__main__':
     main()
