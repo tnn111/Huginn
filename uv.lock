@@ -730,7 +730,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", specifier = ">=0.72.0" },
-    { name = "huggingface-hub", extras = ["inference"], specifier = ">=1.0.1" },
+    { name = "huggingface-hub", specifier = ">=1.0.1" },
     { name = "logfire", specifier = ">=4.14.2" },
     { name = "pydantic-ai", specifier = ">=1.9.0" },
 ]
