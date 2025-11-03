@@ -90,14 +90,84 @@ def download_pdf(pdf_url, output_path):
         return False
 
 
-def doi_to_filename(doi):
-    """Convert DOI to base64-encoded filename."""
-    # Encode DOI to base64
+def doi_to_base64(doi):
+    """Convert DOI to base64-encoded string."""
     doi_bytes = doi.encode('utf-8')
     b64_encoded = base64.b64encode(doi_bytes).decode('utf-8')
     # Remove padding and replace URL-unsafe characters
     b64_encoded = b64_encoded.replace('/', '_').replace('+', '-').rstrip('=')
-    return f'{b64_encoded}.pdf'
+    return b64_encoded
+
+
+def doi_to_filename(doi):
+    """Convert DOI to base64-encoded filename."""
+    return f'{doi_to_base64(doi)}.pdf'
+
+
+def load_manifest(manifest_path):
+    """Load existing manifest file."""
+    manifest = {}
+    if manifest_path.exists():
+        with open(manifest_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    parts = line.split('\t')
+                    if len(parts) == 3:
+                        doi, b64, status = parts
+                        manifest[doi] = {'base64': b64, 'status': status}
+    return manifest
+
+
+def save_manifest(manifest_path, manifest):
+    """Save manifest file."""
+    with open(manifest_path, 'w') as f:
+        for doi, info in sorted(manifest.items()):
+            f.write(f'{doi}\t{info["base64"]}\t{info["status"]}\n')
+
+
+def scan_existing_pdfs(output_dir, manifest, all_dois):
+    """Scan output directory for existing PDFs and update manifest.
+
+    Args:
+        output_dir: Directory containing PDFs
+        manifest: Current manifest dict
+        all_dois: List of all DOIs from references file
+
+    Returns:
+        Number of manifest entries updated or added
+    """
+    pdf_files = list(output_dir.glob('*.pdf'))
+    updated_count = 0
+
+    for pdf_file in pdf_files:
+        # Extract base64 filename (without .pdf extension)
+        b64_doi = pdf_file.stem
+
+        # Find DOI in manifest by base64
+        doi_found = None
+        for doi, info in manifest.items():
+            if info['base64'] == b64_doi:
+                doi_found = doi
+                break
+
+        # If not in manifest, try to find matching DOI from all_dois
+        if not doi_found:
+            for doi in all_dois:
+                if doi_to_base64(doi) == b64_doi:
+                    doi_found = doi
+                    break
+
+        # If PDF exists and file size > 0, mark as Found in manifest
+        if pdf_file.stat().st_size > 0 and doi_found:
+            if doi_found not in manifest:
+                manifest[doi_found] = {'base64': b64_doi, 'status': 'Found'}
+                updated_count += 1
+            elif manifest[doi_found]['status'] != 'Found':
+                manifest[doi_found]['status'] = 'Found'
+                updated_count += 1
+
+    return updated_count
 
 
 def main():
@@ -141,10 +211,20 @@ Examples:
     # Create output directory
     output_dir.mkdir(exist_ok = True)
 
+    # Load manifest
+    manifest_path = output_dir / 'manifest.tsv'
+    manifest = load_manifest(manifest_path)
+    print(f'Loaded manifest with {len(manifest)} existing entries')
+
     # Extract DOIs
     print(f'Extracting DOIs from {references_file}...')
     dois = extract_dois(references_file)
     print(f'Found {len(dois)} DOIs')
+
+    # Scan existing PDFs and update manifest
+    updated = scan_existing_pdfs(output_dir, manifest, dois)
+    if updated > 0:
+        print(f'Updated {updated} manifest entries from existing PDFs')
 
     # Remove duplicates while preserving order
     unique_dois = []
@@ -162,12 +242,13 @@ Examples:
     fail_count = 0
 
     for i, doi in enumerate(unique_dois, 1):
-        filename = doi_to_filename(doi)
+        b64_doi = doi_to_base64(doi)
+        filename = f'{b64_doi}.pdf'
         output_path = output_dir / filename
 
-        # Skip if already downloaded
-        if output_path.exists():
-            print(f'[{i}/{len(unique_dois)}] Skipping {doi} (already exists)')
+        # Skip if already in manifest with 'Found' status
+        if doi in manifest and manifest[doi]['status'] == 'Found':
+            print(f'[{i}/{len(unique_dois)}] Skipping {doi} (already in manifest as Found)')
             skip_count += 1
             continue
 
@@ -180,19 +261,26 @@ Examples:
             print(f'  Found PDF at {pdf_url}')
             if download_pdf(pdf_url, output_path):
                 print(f'  ✓ Downloaded to {output_path}')
+                manifest[doi] = {'base64': b64_doi, 'status': 'Found'}
                 success_count += 1
             else:
                 print(f'  ✗ Failed to download')
+                manifest[doi] = {'base64': b64_doi, 'status': 'Not found'}
                 fail_count += 1
         else:
             print(f'  ✗ No open access PDF available')
+            manifest[doi] = {'base64': b64_doi, 'status': 'Not found'}
             fail_count += 1
+
+    # Save updated manifest
+    save_manifest(manifest_path, manifest)
+    print(f'Updated manifest saved to {manifest_path}')
 
     print(f'\n{"="*80}')
     print(f'Summary:')
     print(f'  Total DOIs: {len(unique_dois)}')
     print(f'  Downloaded: {success_count}')
-    print(f'  Skipped (already exists): {skip_count}')
+    print(f'  Skipped (already in manifest): {skip_count}')
     print(f'  Failed/Not available: {fail_count}')
     print(f'{"="*80}')
 
