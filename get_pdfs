@@ -10,6 +10,7 @@ Extracts DOIs from references.txt and downloads available PDFs.
 """
 import argparse
 import base64
+import logging
 import os
 import re
 import sys
@@ -17,13 +18,41 @@ from pathlib import Path
 
 import requests
 
+# Manifest status constants
+STATUS_FOUND = 'Found'
+STATUS_NOT_FOUND = 'Not found'
+
+# Internal status constants (for logging/logic, but saved as 'Not found' in manifest)
+STATUS_UNAVAILABLE = 'Unavailable'  # No open access available
+STATUS_DOWNLOAD_FAILED = 'DownloadFailed'  # Download error
+STATUS_NETWORK_ERROR = 'NetworkError'  # API/network error
+
 
 def extract_dois(references_file):
-    """Extract DOIs from the references file."""
+    """Extract DOIs from the references file.
+
+    Args:
+        references_file: Path to file containing references
+
+    Returns:
+        List of DOIs extracted from the file
+
+    Raises:
+        FileNotFoundError: If references file doesn't exist
+        IOError: If file cannot be read
+    """
     dois = []
 
-    with open(references_file, 'r') as f:
-        content = f.read()
+    try:
+        with open(references_file, 'r') as f:
+            content = f.read()
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f'References file not found: {references_file}\n'
+            f'Please create the file or specify a different path with --references'
+        )
+    except IOError as e:
+        raise IOError(f'Cannot read references file {references_file}: {e}')
 
     # Pattern to match [DOI]:, [doi]:, DOI:, or doi: with optional whitespace
     # Followed by the DOI (format: 10.XXXX/...)
@@ -48,7 +77,9 @@ def get_pdf_url(doi, email):
         email: Email address for Unpaywall API (required)
 
     Returns:
-        PDF URL if available, None otherwise
+        Tuple of (pdf_url, error_type) where:
+        - pdf_url is the URL if available, None otherwise
+        - error_type is STATUS_NETWORK_ERROR if network/API failed, None otherwise
     """
     api_url = f'https://api.unpaywall.org/v2/{doi}'
     params = {'email': email}
@@ -62,16 +93,58 @@ def get_pdf_url(doi, email):
         if data.get('is_oa'):
             best_oa = data.get('best_oa_location')
             if best_oa and best_oa.get('url_for_pdf'):
-                return best_oa['url_for_pdf']
+                return best_oa['url_for_pdf'], None
 
-        return None
+        return None, None
     except Exception as e:
-        print(f'Error fetching metadata for {doi}: {e}')
-        return None
+        logging.error(f'Error fetching metadata for {doi}: {e}')
+        return None, STATUS_NETWORK_ERROR
+
+
+def is_valid_pdf(file_path):
+    """Check if file is a valid PDF.
+
+    Args:
+        file_path: Path to file to check
+
+    Returns:
+        True if file appears to be a valid PDF, False otherwise
+    """
+    try:
+        # Check file exists and has content
+        if not file_path.exists() or file_path.stat().st_size == 0:
+            return False
+
+        # Check PDF magic number (header)
+        with open(file_path, 'rb') as f:
+            header = f.read(5)
+            if not header.startswith(b'%PDF-'):
+                logging.warning(f'File {file_path} does not start with PDF magic number')
+                return False
+
+            # Check for EOF marker (basic validation)
+            # Read last 1024 bytes to look for %%EOF
+            f.seek(max(0, file_path.stat().st_size - 1024))
+            tail = f.read()
+            if b'%%EOF' not in tail:
+                logging.warning(f'File {file_path} missing %%EOF marker')
+                return False
+
+        return True
+    except Exception as e:
+        logging.error(f'Error validating PDF {file_path}: {e}')
+        return False
 
 
 def download_pdf(pdf_url, output_path):
-    """Download PDF from URL to output path."""
+    """Download PDF from URL to output path.
+
+    Cleans up partial downloads on failure.
+    Validates downloaded file is a PDF.
+
+    Returns:
+        True if successful, False otherwise
+    """
     try:
         # Add headers to avoid 403 errors from some publishers
         headers = {
@@ -84,9 +157,21 @@ def download_pdf(pdf_url, output_path):
             for chunk in response.iter_content(chunk_size = 8192):
                 f.write(chunk)
 
+        # Validate downloaded file is a PDF
+        if not is_valid_pdf(output_path):
+            logging.error(f'Downloaded file is not a valid PDF: {output_path}')
+            output_path.unlink()
+            return False
+
         return True
     except Exception as e:
-        print(f'Error downloading PDF: {e}')
+        logging.error(f'Error downloading PDF: {e}')
+        # Clean up partial download
+        if output_path.exists():
+            try:
+                output_path.unlink()
+            except OSError:
+                pass
         return False
 
 
@@ -105,25 +190,83 @@ def doi_to_filename(doi):
 
 
 def load_manifest(manifest_path):
-    """Load existing manifest file."""
+    """Load existing manifest file with validation.
+
+    Returns:
+        Dictionary mapping DOI to {base64, status}
+
+    Logs warnings for malformed entries.
+    """
     manifest = {}
+    valid_statuses = {STATUS_FOUND, STATUS_NOT_FOUND}
+
     if manifest_path.exists():
         with open(manifest_path, 'r') as f:
-            for line in f:
+            for line_num, line in enumerate(f, 1):
                 line = line.strip()
-                if line:
-                    parts = line.split('\t')
-                    if len(parts) == 3:
-                        doi, b64, status = parts
-                        manifest[doi] = {'base64': b64, 'status': status}
+                if not line:
+                    continue
+
+                parts = line.split('\t')
+                if len(parts) != 3:
+                    logging.warning(
+                        f'Manifest line {line_num}: Expected 3 fields, got {len(parts)}. Skipping.'
+                    )
+                    continue
+
+                doi, b64, status = parts
+
+                # Validate DOI format (basic check)
+                if not doi.startswith('10.'):
+                    logging.warning(
+                        f'Manifest line {line_num}: Invalid DOI format "{doi}". Skipping.'
+                    )
+                    continue
+
+                # Validate status
+                if status not in valid_statuses:
+                    logging.warning(
+                        f'Manifest line {line_num}: Unknown status "{status}" for DOI {doi}. '
+                        f'Expected one of {valid_statuses}. Using anyway.'
+                    )
+
+                # Validate base64 encoding (basic check)
+                if not b64 or any(c in b64 for c in [' ', '\t', '\n']):
+                    logging.warning(
+                        f'Manifest line {line_num}: Invalid base64 "{b64}" for DOI {doi}. Skipping.'
+                    )
+                    continue
+
+                manifest[doi] = {'base64': b64, 'status': status}
+
     return manifest
 
 
 def save_manifest(manifest_path, manifest):
-    """Save manifest file."""
-    with open(manifest_path, 'w') as f:
-        for doi, info in sorted(manifest.items()):
-            f.write(f'{doi}\t{info["base64"]}\t{info["status"]}\n')
+    """Save manifest file atomically using temp file."""
+    import tempfile
+
+    # Write to temp file in same directory (ensures same filesystem)
+    temp_fd, temp_path = tempfile.mkstemp(
+        dir = manifest_path.parent,
+        prefix = '.manifest_',
+        suffix = '.tmp'
+    )
+
+    try:
+        with os.fdopen(temp_fd, 'w') as f:
+            for doi, info in sorted(manifest.items()):
+                f.write(f'{doi}\t{info["base64"]}\t{info["status"]}\n')
+
+        # Atomic rename (overwrites existing manifest)
+        os.replace(temp_path, manifest_path)
+    except Exception:
+        # Clean up temp file on error
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+        raise
 
 
 def scan_existing_pdfs(output_dir, manifest, all_dois):
@@ -140,32 +283,35 @@ def scan_existing_pdfs(output_dir, manifest, all_dois):
     pdf_files = list(output_dir.glob('*.pdf'))
     updated_count = 0
 
+    # Build reverse lookup: base64 -> DOI (O(n) instead of O(n²))
+    b64_to_doi = {info['base64']: doi for doi, info in manifest.items()}
+
+    # Build lookup for all_dois
+    all_dois_b64 = {doi_to_base64(doi): doi for doi in all_dois}
+
     for pdf_file in pdf_files:
         # Extract base64 filename (without .pdf extension)
         b64_doi = pdf_file.stem
 
-        # Find DOI in manifest by base64
-        doi_found = None
-        for doi, info in manifest.items():
-            if info['base64'] == b64_doi:
-                doi_found = doi
-                break
+        # Find DOI using reverse lookup (O(1))
+        doi_found = b64_to_doi.get(b64_doi)
 
         # If not in manifest, try to find matching DOI from all_dois
         if not doi_found:
-            for doi in all_dois:
-                if doi_to_base64(doi) == b64_doi:
-                    doi_found = doi
-                    break
+            doi_found = all_dois_b64.get(b64_doi)
 
-        # If PDF exists and file size > 0, mark as Found in manifest
-        if pdf_file.stat().st_size > 0 and doi_found:
+        # Validate PDF and mark as Found in manifest
+        if doi_found and is_valid_pdf(pdf_file):
             if doi_found not in manifest:
-                manifest[doi_found] = {'base64': b64_doi, 'status': 'Found'}
+                manifest[doi_found] = {'base64': b64_doi, 'status': STATUS_FOUND}
                 updated_count += 1
-            elif manifest[doi_found]['status'] != 'Found':
-                manifest[doi_found]['status'] = 'Found'
+            elif manifest[doi_found]['status'] != STATUS_FOUND:
+                manifest[doi_found]['status'] = STATUS_FOUND
                 updated_count += 1
+        elif doi_found:
+            # File exists but is not a valid PDF
+            logging.warning(f'File {pdf_file} is not a valid PDF, removing from scan')
+            manifest[doi_found] = {'base64': b64_doi, 'status': STATUS_NOT_FOUND}
 
     return updated_count
 
@@ -197,8 +343,19 @@ Examples:
         default = 'references.txt',
         help = 'References file to parse (default: references.txt)'
     )
+    parser.add_argument(
+        '-v', '--verbose',
+        action = 'store_true',
+        help = 'Enable verbose logging'
+    )
 
     args = parser.parse_args()
+
+    # Configure logging
+    logging.basicConfig(
+        level = logging.DEBUG if args.verbose else logging.INFO,
+        format = '%(message)s'
+    )
 
     # Configuration
     references_file = args.references
@@ -206,7 +363,7 @@ Examples:
     email = args.email
 
     if email == 'user@example.com':
-        print('Warning: Using default email. Specify --email for better results.')
+        logging.warning('Using default email. Specify --email for better results.')
 
     # Create output directory
     output_dir.mkdir(exist_ok = True)
@@ -214,17 +371,17 @@ Examples:
     # Load manifest
     manifest_path = output_dir / 'manifest.tsv'
     manifest = load_manifest(manifest_path)
-    print(f'Loaded manifest with {len(manifest)} existing entries')
+    logging.info(f'Loaded manifest with {len(manifest)} existing entries')
 
     # Extract DOIs
-    print(f'Extracting DOIs from {references_file}...')
+    logging.info(f'Extracting DOIs from {references_file}...')
     dois = extract_dois(references_file)
-    print(f'Found {len(dois)} DOIs')
+    logging.info(f'Found {len(dois)} DOIs')
 
     # Scan existing PDFs and update manifest
     updated = scan_existing_pdfs(output_dir, manifest, dois)
     if updated > 0:
-        print(f'Updated {updated} manifest entries from existing PDFs')
+        logging.info(f'Updated {updated} manifest entries from existing PDFs')
 
     # Remove duplicates while preserving order
     unique_dois = []
@@ -234,7 +391,7 @@ Examples:
             unique_dois.append(doi)
             seen.add(doi)
 
-    print(f'Unique DOIs: {len(unique_dois)}')
+    logging.info(f'Unique DOIs: {len(unique_dois)}')
 
     # Download PDFs
     success_count = 0
@@ -247,42 +404,46 @@ Examples:
         output_path = output_dir / filename
 
         # Skip if already in manifest with 'Found' status
-        if doi in manifest and manifest[doi]['status'] == 'Found':
-            print(f'[{i}/{len(unique_dois)}] Skipping {doi} (already in manifest as Found)')
+        if doi in manifest and manifest[doi]['status'] == STATUS_FOUND:
+            logging.info(f'[{i}/{len(unique_dois)}] Skipping {doi} (already in manifest as Found)')
             skip_count += 1
             continue
 
-        print(f'[{i}/{len(unique_dois)}] Processing {doi}...')
+        logging.info(f'[{i}/{len(unique_dois)}] Processing {doi}...')
 
         # Get PDF URL from Unpaywall
-        pdf_url = get_pdf_url(doi, email)
+        pdf_url, network_error = get_pdf_url(doi, email)
 
-        if pdf_url:
-            print(f'  Found PDF at {pdf_url}')
+        if network_error:
+            logging.warning(f'  ✗ Network/API error')
+            manifest[doi] = {'base64': b64_doi, 'status': STATUS_NOT_FOUND}
+            fail_count += 1
+        elif pdf_url:
+            logging.debug(f'  Found PDF at {pdf_url}')
             if download_pdf(pdf_url, output_path):
-                print(f'  ✓ Downloaded to {output_path}')
-                manifest[doi] = {'base64': b64_doi, 'status': 'Found'}
+                logging.info(f'  ✓ Downloaded to {output_path}')
+                manifest[doi] = {'base64': b64_doi, 'status': STATUS_FOUND}
                 success_count += 1
             else:
-                print(f'  ✗ Failed to download')
-                manifest[doi] = {'base64': b64_doi, 'status': 'Not found'}
+                logging.warning(f'  ✗ Failed to download')
+                manifest[doi] = {'base64': b64_doi, 'status': STATUS_NOT_FOUND}
                 fail_count += 1
         else:
-            print(f'  ✗ No open access PDF available')
-            manifest[doi] = {'base64': b64_doi, 'status': 'Not found'}
+            logging.info(f'  ✗ No open access PDF available')
+            manifest[doi] = {'base64': b64_doi, 'status': STATUS_NOT_FOUND}
             fail_count += 1
 
     # Save updated manifest
     save_manifest(manifest_path, manifest)
-    print(f'Updated manifest saved to {manifest_path}')
+    logging.info(f'Updated manifest saved to {manifest_path}')
 
-    print(f'\n{"="*80}')
-    print(f'Summary:')
-    print(f'  Total DOIs: {len(unique_dois)}')
-    print(f'  Downloaded: {success_count}')
-    print(f'  Skipped (already in manifest): {skip_count}')
-    print(f'  Failed/Not available: {fail_count}')
-    print(f'{"="*80}')
+    logging.info(f'\n{"="*80}')
+    logging.info(f'Summary:')
+    logging.info(f'  Total DOIs: {len(unique_dois)}')
+    logging.info(f'  Downloaded: {success_count}')
+    logging.info(f'  Skipped (already in manifest): {skip_count}')
+    logging.info(f'  Failed/Not available: {fail_count}')
+    logging.info(f'{"="*80}')
 
 
 if __name__ == '__main__':
