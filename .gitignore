@@ -15,6 +15,9 @@ References/
 # Documents
 Documents/
 
+# Output
+Output/
+
 # Jupyter
 .ipynb_checkpoints/
 *.log
