@@ -6,6 +6,7 @@ Populates ChromaDB vector store with chunked scientific papers from Documents fo
 
 import json
 import logging
+import warnings
 from pathlib import Path
 from typing import Iterator
 import sys
@@ -24,6 +25,9 @@ from huginn_utils import (
     extract_authors,
     get_page_number,
 )
+
+# Suppress deprecation warnings from docling about annotations -> meta migration
+warnings.filterwarnings('ignore', message='Migrating deprecated')
 
 # Configuration
 DOCUMENTS_DIR = Path('Documents')
