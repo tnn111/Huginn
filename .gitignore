@@ -15,6 +15,9 @@ References/
 # Documents
 Documents/
 
+# ChromaDB vector database
+Documents_Chroma_DB/
+
 # Output
 Output/
 
