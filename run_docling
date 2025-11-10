@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+/usr/bin/time docling \
+  --from pdf \
+  --to json \
+  --to md \
+  --output ${2} \
+  --pdf-backend dlparse_v4 \
+  --ocr \
+  --table-mode accurate \
+  --enrich-code \
+  --enrich-formula \
+  --enrich-picture-classes \
+  ${1} &> docling.log
