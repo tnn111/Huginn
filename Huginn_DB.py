@@ -20,7 +20,7 @@ from sentence_transformers import SentenceTransformer
 import chromadb
 from chromadb.config import Settings
 
-from huginn_utils import (
+from huginn_db_utils import (
     decode_doi_from_filename,
     extract_document_title,
     extract_authors,

@@ -16,7 +16,7 @@ from sentence_transformers import SentenceTransformer
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
-from huginn_utils import format_citation
+from huginn_chat_utils import format_citation
 
 # Configuration
 CHROMA_DB_DIR = Path('Documents_Chroma_DB')

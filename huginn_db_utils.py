@@ -1,4 +1,4 @@
-"""Shared utilities for Huginn RAG system."""
+"""Utilities for Huginn_DB database management."""
 
 import base64
 import logging
@@ -104,27 +104,3 @@ def get_page_number(chunk) -> Optional[int]:
         pass
 
     return None
-
-
-def format_citation(doi: str, headings: Optional[list[str]] = None, page_no: Optional[int] = None) -> str:
-    """Format a citation string for Claude's responses.
-
-    Args:
-        doi: Document DOI
-        headings: Section headings (hierarchical)
-        page_no: Page number
-
-    Returns:
-        Formatted citation string
-    """
-    parts = [f'DOI: {doi}']
-
-    if headings and len(headings) > 0:
-        # Use the most specific (last) heading
-        section = headings[-1]
-        parts.append(f'{section} section')
-
-    if page_no:
-        parts.append(f'p. {page_no}')
-
-    return ', '.join(parts)
