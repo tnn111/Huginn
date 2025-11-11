@@ -13,7 +13,7 @@ import sys
 
 from docling_core.types.doc.document import DoclingDocument
 from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
-from docling_core.transforms.chunker.hybrid_chunker import HybridChunker
+from docling_core.transforms.chunker.hybrid_chunker import HybridChunker, DocMeta
 from transformers import AutoTokenizer
 from sentence_transformers import SentenceTransformer
 import chromadb
@@ -141,7 +141,10 @@ def process_document(
 
             # Extract chunk metadata
             page_no = get_page_number(chunk)
-            headings = chunk.meta.headings if chunk.meta.headings else []
+            # Type narrowing: HybridChunker returns chunks with DocMeta, not BaseMeta
+            chunk_meta = chunk.meta
+            assert isinstance(chunk_meta, DocMeta), f'Expected DocMeta, got {type(chunk_meta)}'
+            headings = chunk_meta.headings if chunk_meta.headings is not None else []
 
             # Build metadata dictionary
             metadata = {
