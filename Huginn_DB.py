@@ -13,7 +13,8 @@ import sys
 
 from docling_core.types.doc.document import DoclingDocument
 from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
-from docling_core.transforms.chunker.hybrid_chunker import HybridChunker, DocMeta
+from docling_core.transforms.chunker.hybrid_chunker import HybridChunker
+from docling_core.transforms.chunker.hierarchical_chunker import DocMeta
 from transformers import AutoTokenizer
 from sentence_transformers import SentenceTransformer
 import chromadb
